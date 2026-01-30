@@ -29,6 +29,7 @@ interface DataRow {
   venda_liquida: number;
   custo_total: number;
   lucro_rs: number;
+  margem_pct: number;
 }
 
 interface CustoManual {

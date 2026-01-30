@@ -9,24 +9,10 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Try RPC first (single HTTP call, no pagination needed)
-  const rpcParams: Record<string, unknown> = {
-    p_data_inicio: dataInicio || "1900-01-01",
-    p_data_fim: dataFim || "2099-12-31",
-    p_consultores: consultores ? consultores.split(",").map((c) => c.trim()) : null,
-  };
-
-  const { data: rpcData, error: rpcError } = await supabase.rpc("get_pecas_servicos", rpcParams);
-
-  if (!rpcError && rpcData) {
-    return NextResponse.json({ data: rpcData, total: rpcData.length });
-  }
-
-  // Fallback: paginated query (if RPC function not yet created)
   let query = supabase
     .from("pecas_servicos")
     .select(
-      "data, filial, peca_ou_servico, balcao_ou_oficina, tipo_midia, consultor, condicao_pagamento, venda_devolucao, cliente, faturamento, impostos, venda_liquida, custo_total, lucro_rs"
+      "data, filial, peca_ou_servico, balcao_ou_oficina, tipo_midia, consultor, condicao_pagamento, venda_devolucao, cliente, faturamento, impostos, venda_liquida, custo_total, lucro_rs, margem_pct"
     );
 
   if (dataInicio) {
@@ -40,8 +26,11 @@ export async function GET(request: NextRequest) {
     query = query.in("consultor", consultoresList);
   }
 
+  // Order by id for deterministic pagination (without order, Supabase/PostgREST
+  // can return rows in different orders across range requests, skipping data)
   query = query.order("id");
 
+  // Supabase has a default limit of 1000 rows, we need all data
   const allData: Record<string, unknown>[] = [];
   let from = 0;
   const pageSize = 1000;
