@@ -48,7 +48,7 @@ function LoginForm() {
             <img
               src="/logo.jpg"
               alt="Guerra Pedrotti"
-              className="h-10 w-auto mb-3"
+              className="max-h-6 w-auto object-contain mb-3"
             />
             <h1 className="text-lg font-bold text-slate-800">
               Pecas & Servicos
