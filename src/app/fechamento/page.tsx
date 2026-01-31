@@ -546,48 +546,6 @@ export default function FechamentoPage() {
     return filtered;
   }, [dadosMes, consultoresSelecionados, midiasSelecionadas, pecaServicoSelecionados]);
 
-  // Variável do consultor: 2,5% do lucro de Peças (respects consultant filter)
-  const variavelConsultor = useMemo(() => {
-    let lucroPecas = 0;
-    for (const row of dadosFiltrados) {
-      const tipo = (row.peca_ou_servico || "").toUpperCase();
-      if (tipo.includes("PE")) {
-        lucroPecas += row.lucro_rs || 0;
-      }
-    }
-    return Math.max(0, lucroPecas * 0.025);
-  }, [dadosFiltrados]);
-
-  // Variável do encarregado: 2% lucro Peças + 3% lucro Serviço Oficina (always total geral do mês)
-  const variavelEncarregado = useMemo(() => {
-    let lucroPecas = 0;
-    let lucroServicoOficina = 0;
-    for (const row of dadosMes) {
-      const tipo = (row.peca_ou_servico || "").toUpperCase();
-      if (tipo.includes("PE")) {
-        lucroPecas += row.lucro_rs || 0;
-      }
-      if (tipo.includes("SERVI") && (row.balcao_ou_oficina || "").toUpperCase().includes("OFICINA")) {
-        lucroServicoOficina += row.lucro_rs || 0;
-      }
-    }
-    const mesAtual = mesSelecionado + 1;
-    for (const cm of custosManuaisAno.filter((c) => c.mes === mesAtual)) {
-      const manualTotal = (cm.custo_folha || 0) + (cm.horas_extras || 0) + (cm.custo_terceiros || 0) + (cm.custo_variaveis || 0) + (cm.consumiveis || 0);
-      let oldCost = 0;
-      for (const r of dadosMes) {
-        if (r.filial === cm.filial && (r.peca_ou_servico || "").toUpperCase().includes("SERVI") && (r.balcao_ou_oficina || "").toUpperCase().includes("OFICINA") && (r.tipo_midia || "").toUpperCase().includes("OUTRO")) {
-          oldCost += r.custo_total || 0;
-        }
-      }
-      const delta = manualTotal - oldCost;
-      lucroServicoOficina -= delta;
-    }
-    const comissaoPecasEncarregado = Math.max(0, lucroPecas * 0.02);
-    const comissaoServicoEncarregado = Math.max(0, lucroServicoOficina * 0.03);
-    return comissaoPecasEncarregado + comissaoServicoEncarregado;
-  }, [dadosMes, custosManuaisAno, mesSelecionado]);
-
   // Build DRE tree with manual cost override
   useEffect(() => {
     if (dadosFiltrados.length > 0) {
@@ -900,50 +858,6 @@ export default function FechamentoPage() {
           </div>
 
           <div className="relative">
-            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide block mb-1.5">Tipo Midia</span>
-            <button
-              type="button"
-              onClick={() => setMidiaDropdownOpen(!midiaDropdownOpen)}
-              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] text-left flex items-center justify-between hover:border-slate-300 transition-colors"
-            >
-              <span className="truncate text-slate-600">
-                {midiasSelecionadas.length === 0
-                  ? "Todos os tipos"
-                  : midiasSelecionadas.length === 1
-                    ? midiasSelecionadas[0]
-                    : `${midiasSelecionadas.length} selecionados`}
-              </span>
-              <svg className="w-4 h-4 ml-2 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
-
-            {midiaDropdownOpen && (
-              <div className="absolute z-50 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
-                <div className="sticky top-0 bg-white border-b border-slate-100 p-2.5 flex gap-3">
-                  <button onClick={() => setMidiasSelecionadas([...midiasDisponiveis])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
-                    Selecionar todos
-                  </button>
-                  <button onClick={() => setMidiasSelecionadas([])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
-                    Limpar
-                  </button>
-                </div>
-                {midiasDisponiveis.map((midia) => (
-                  <label key={midia} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
-                    <input
-                      type="checkbox"
-                      checked={midiasSelecionadas.includes(midia)}
-                      onChange={() => toggleMidia(midia)}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="truncate text-slate-600">{midia}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="relative">
             <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide block mb-1.5">Peca / Servico</span>
             <button
               type="button"
@@ -987,6 +901,50 @@ export default function FechamentoPage() {
             )}
           </div>
 
+          <div className="relative">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide block mb-1.5">Tipo Midia</span>
+            <button
+              type="button"
+              onClick={() => setMidiaDropdownOpen(!midiaDropdownOpen)}
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] text-left flex items-center justify-between hover:border-slate-300 transition-colors"
+            >
+              <span className="truncate text-slate-600">
+                {midiasSelecionadas.length === 0
+                  ? "Todos os tipos"
+                  : midiasSelecionadas.length === 1
+                    ? midiasSelecionadas[0]
+                    : `${midiasSelecionadas.length} selecionados`}
+              </span>
+              <svg className="w-4 h-4 ml-2 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {midiaDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                <div className="sticky top-0 bg-white border-b border-slate-100 p-2.5 flex gap-3">
+                  <button onClick={() => setMidiasSelecionadas([...midiasDisponiveis])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Selecionar todos
+                  </button>
+                  <button onClick={() => setMidiasSelecionadas([])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Limpar
+                  </button>
+                </div>
+                {midiasDisponiveis.map((midia) => (
+                  <label key={midia} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={midiasSelecionadas.includes(midia)}
+                      onChange={() => toggleMidia(midia)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="truncate text-slate-600">{midia}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           {periodoLabel && (
             <span className="text-xs text-slate-400 ml-auto self-center">
               Periodo: <span className="font-medium text-slate-600">{periodoLabel}</span>
@@ -1001,7 +959,7 @@ export default function FechamentoPage() {
 
       {/* Metric Cards */}
       {totaisGeral && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
           <MetricCard label="Faturamento" value={formatBRL(totaisGeral.faturamento)} />
           <MetricCard
             label="Margem"
@@ -1009,18 +967,6 @@ export default function FechamentoPage() {
             accent={totaisGeral.margem < 0 ? "text-red-600" : "text-emerald-600"}
           />
           <MetricCard label="TMR" value={formatDias(totaisGeral.tmr)} sub="prazo medio recebimento" />
-          <MetricCard
-            label="Var. Consultor"
-            value={formatBRL(variavelConsultor)}
-            sub="2,5% lucro pecas"
-            accent={variavelConsultor < 0 ? "text-red-600" : "text-blue-600"}
-          />
-          <MetricCard
-            label="Var. Encarregado"
-            value={formatBRL(variavelEncarregado)}
-            sub="2% pecas + 3% serv. oficina"
-            accent={variavelEncarregado < 0 ? "text-red-600" : "text-blue-600"}
-          />
         </div>
       )}
 
