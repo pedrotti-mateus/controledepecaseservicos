@@ -52,7 +52,7 @@ interface MesChartData {
   selecionado: boolean;
 }
 
-type MetricaGrafico = "faturamento" | "margem" | "tmr";
+type MetricaGrafico = "faturamento" | "margem" | "tmr" | "carteira";
 
 interface Totais {
   faturamento: number;
@@ -82,6 +82,7 @@ const METRICA_LABELS: Record<MetricaGrafico, string> = {
   faturamento: "Faturamento",
   margem: "Margem %",
   tmr: "TMR (dias)",
+  carteira: "Carteira",
 };
 
 function calcTotais(rows: DataRow[]): Totais {
@@ -314,13 +315,13 @@ function MetricCard({ label, value, sub, accent }: { label: string; value: strin
 }
 
 function formatChartTooltip(value: number, metrica: MetricaGrafico): string {
-  if (metrica === "faturamento") return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  if (metrica === "faturamento" || metrica === "carteira") return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   if (metrica === "margem") return value.toFixed(2) + "%";
   return value.toFixed(1) + " dias";
 }
 
 function formatYAxis(v: number, metrica: MetricaGrafico): string {
-  if (metrica === "faturamento") {
+  if (metrica === "faturamento" || metrica === "carteira") {
     const n = Number(v);
     return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(0)}K` : String(n);
   }
@@ -332,6 +333,7 @@ const METRICA_COLORS: Record<MetricaGrafico, string> = {
   faturamento: "#3b82f6",
   margem: "#10b981",
   tmr: "#f59e0b",
+  carteira: "#ef4444",
 };
 
 export default function FechamentoPage() {
@@ -600,16 +602,20 @@ export default function FechamentoPage() {
     }
 
     function calcMetric(rows: DataRow[], allYearRows: DataRow[], mesIdx: number, metrica: MetricaGrafico, custosM: CustoManual[]): number {
-      let fat = 0, vendaLiq = 0, lucro = 0;
+      let fat = 0, vendaLiq = 0, lucro = 0, fatCarteira = 0;
       const regs: Array<{ condicao_pagamento: string | null; faturamento: number }> = [];
       for (const r of rows) {
         fat += r.faturamento || 0;
         vendaLiq += r.venda_liquida || 0;
         lucro += r.lucro_rs || 0;
         regs.push({ condicao_pagamento: r.condicao_pagamento, faturamento: r.faturamento || 0 });
+        if ((r.condicao_pagamento || "").toUpperCase().trim() === "CARTEIRA") {
+          fatCarteira += r.faturamento || 0;
+        }
       }
 
       if (metrica === "faturamento") return Math.round(fat * 100) / 100;
+      if (metrica === "carteira") return Math.round(fatCarteira * 100) / 100;
       if (metrica === "tmr") return rows.length > 0 ? Math.round(calcularTMR(regs) * 100) / 100 : 0;
 
       // Margem: apply manual cost delta only if data includes service rows
@@ -749,6 +755,16 @@ export default function FechamentoPage() {
   const totaisGeral = tree?.totais;
   const hasAnyData = dadosAno.length > 0;
   const color = METRICA_COLORS[metricaGrafico];
+
+  const carteiraTotal = useMemo(() => {
+    let total = 0;
+    for (const row of dadosFiltrados) {
+      if ((row.condicao_pagamento || "").toUpperCase().trim() === "CARTEIRA") {
+        total += row.faturamento || 0;
+      }
+    }
+    return total;
+  }, [dadosFiltrados]);
 
   return (
     <div>
@@ -959,7 +975,7 @@ export default function FechamentoPage() {
 
       {/* Metric Cards */}
       {totaisGeral && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           <MetricCard label="Faturamento" value={formatBRL(totaisGeral.faturamento)} />
           <MetricCard
             label="Margem"
@@ -967,6 +983,12 @@ export default function FechamentoPage() {
             accent={totaisGeral.margem < 0 ? "text-red-600" : "text-emerald-600"}
           />
           <MetricCard label="TMR" value={formatDias(totaisGeral.tmr)} sub="prazo medio recebimento" />
+          <MetricCard
+            label="Carteira"
+            value={formatBRL(carteiraTotal)}
+            sub={totaisGeral.faturamento ? `${((carteiraTotal / totaisGeral.faturamento) * 100).toFixed(1)}% do faturamento` : undefined}
+            accent="text-red-600"
+          />
         </div>
       )}
 

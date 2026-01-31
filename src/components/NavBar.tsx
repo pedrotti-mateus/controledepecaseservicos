@@ -124,7 +124,7 @@ export default function NavBar() {
                 alt="Guerra Pedrotti"
                 className="h-[18px] w-auto"
               />
-              <span className="text-[15px] font-semibold text-slate-800">
+              <span className="hidden sm:inline text-[15px] font-semibold text-slate-800">
                 Pecas & Servicos
               </span>
             </Link>
