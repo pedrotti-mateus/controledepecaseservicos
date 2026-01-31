@@ -215,6 +215,7 @@ export default function RelatoriosPage() {
         comissao_total: number;
         salario_fixo: number;
         variavel: number;
+        regra: "comissao" | "chapa";
       }> = json.data || [];
 
       if (data.length === 0) {
@@ -222,12 +223,16 @@ export default function RelatoriosPage() {
         return;
       }
 
+      const comissionados = data.filter((d) => d.regra === "comissao");
+      const chapaList = data.filter((d) => d.regra === "chapa");
+
       const doc = new jsPDF();
       pdfHeader(doc, "Relatorio Variavel dos Mecanicos", periodo);
 
+      // --- Comissionados table ---
       const totais = { comissao: 0, salario: 0, variavel: 0 };
 
-      const rows = data.map((d) => {
+      const rows = comissionados.map((d) => {
         totais.comissao += d.comissao_total;
         totais.salario += d.salario_fixo;
         totais.variavel += d.variavel;
@@ -241,7 +246,7 @@ export default function RelatoriosPage() {
       });
 
       rows.push([
-        "TOTAL",
+        "SUBTOTAL",
         "",
         formatBRL(totais.comissao),
         formatBRL(totais.salario),
@@ -269,6 +274,52 @@ export default function RelatoriosPage() {
           }
         },
       });
+
+      // --- Chapa Dobrada section (MARCOS FERNANDO DIAS) ---
+      let grandTotal = totais.variavel;
+
+      if (chapaList.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let cursorY = (doc as any).lastAutoTable?.finalY || 80;
+        cursorY += 10;
+
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text("Variavel Chapa Dobrada (6% do lucro - itens C.F.Q / C.G)", 14, cursorY);
+        cursorY += 4;
+
+        const chapaRows = chapaList.map((d) => {
+          grandTotal += d.variavel;
+          return [
+            d.mecanico,
+            formatBRL(d.comissao_total),
+            "6%",
+            formatBRL(d.variavel),
+          ];
+        });
+
+        autoTable(doc, {
+          startY: cursorY,
+          head: [["Mecanico", "Lucro Chapa", "%", "Variavel"]],
+          body: chapaRows,
+          theme: "grid",
+          headStyles: { fillColor: [120, 53, 15], fontSize: 9, fontStyle: "bold" },
+          bodyStyles: { fontSize: 9 },
+          columnStyles: {
+            0: { cellWidth: 60 },
+            1: { halign: "right", cellWidth: 40 },
+            2: { halign: "right", cellWidth: 20 },
+            3: { halign: "right", cellWidth: 35 },
+          },
+        });
+      }
+
+      // Grand total
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const lastY = (doc as any).lastAutoTable?.finalY || 100;
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text(`Total Geral Variaveis: R$ ${formatBRL(grandTotal)}`, 14, lastY + 10);
 
       pdfFooter(doc);
       doc.save(`Variavel_Mecanicos_${periodoArquivo}.pdf`);
@@ -413,7 +464,7 @@ export default function RelatoriosPage() {
     {
       id: "mecanicos",
       titulo: "Variavel dos Mecanicos",
-      descricao: "Comissao descontando salario fixo dos mecanicos comissionados",
+      descricao: "Comissao dos mecanicos comissionados + chapa dobrada (Marcos F. Dias)",
       cor: "emerald",
       gerar: gerarVariavelMecanicos,
     },

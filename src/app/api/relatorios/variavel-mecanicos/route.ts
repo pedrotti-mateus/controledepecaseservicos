@@ -42,7 +42,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Calculate variable per mechanic
-    const resultado = (cadastro || []).map((mec) => {
+    const resultado: Array<{
+      mecanico: string;
+      filial: string;
+      comissao_total: number;
+      salario_fixo: number;
+      variavel: number;
+      regra: "comissao" | "chapa";
+    }> = (cadastro || []).map((mec) => {
       const comissao = comissaoMap.get(mec.mecanico) || 0;
       const salario = mec.salario_fixo || 0;
       const variavel = Math.max(0, comissao - salario);
@@ -52,7 +59,61 @@ export async function GET(request: NextRequest) {
         comissao_total: Math.round(comissao * 100) / 100,
         salario_fixo: Math.round(salario * 100) / 100,
         variavel: Math.round(variavel * 100) / 100,
+        regra: "comissao" as const,
       };
+    });
+
+    // --- MARCOS FERNANDO DIAS: 6% lucro chapa dobrada (C.F.Q / C.G) ---
+    const dataInicio = `${ano}-${String(mes).padStart(2, "0")}-01`;
+    const lastDay = new Date(ano, mes, 0).getDate();
+    const dataFim = `${ano}-${String(mes).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+    let allChapa: Array<{ peca_servico_nome: string | null; lucro_rs: number }> = [];
+    let from = 0;
+    const pageSize = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from("pecas_servicos")
+        .select("peca_servico_nome, lucro_rs")
+        .gte("data", dataInicio)
+        .lte("data", dataFim)
+        .order("id")
+        .range(from, from + pageSize - 1);
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      if (data && data.length > 0) {
+        allChapa.push(...data);
+        from += pageSize;
+        if (data.length < pageSize) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    const itensChapa = allChapa.filter((row) => {
+      const nome = (row.peca_servico_nome || "").toUpperCase().trim();
+      return nome.startsWith("C.F.Q") || nome.startsWith("C.G");
+    });
+
+    let lucroChapa = 0;
+    for (const row of itensChapa) {
+      lucroChapa += row.lucro_rs || 0;
+    }
+
+    const percentualChapa = 0.06;
+    const variavelChapa = Math.round(Math.max(0, lucroChapa * percentualChapa) * 100) / 100;
+
+    resultado.push({
+      mecanico: "MARCOS FERNANDO DIAS",
+      filial: "-",
+      comissao_total: Math.round(lucroChapa * 100) / 100,
+      salario_fixo: 0,
+      variavel: variavelChapa,
+      regra: "chapa",
     });
 
     return NextResponse.json({ data: resultado });
