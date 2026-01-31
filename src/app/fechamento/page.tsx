@@ -344,12 +344,16 @@ export default function FechamentoPage() {
   const currentYear = new Date().getFullYear();
   const [ano, setAno] = useState(currentYear);
   const [mesSelecionado, setMesSelecionado] = useState<number>(new Date().getMonth());
-  const [consultoresDisponiveis, setConsultoresDisponiveis] = useState<string[]>([]);
   const [consultoresSelecionados, setConsultoresSelecionados] = useState<string[]>([]);
   const [consultorDropdownOpen, setConsultorDropdownOpen] = useState(false);
+  const [midiasSelecionadas, setMidiasSelecionadas] = useState<string[]>([]);
+  const [midiaDropdownOpen, setMidiaDropdownOpen] = useState(false);
+  const [pecaServicoSelecionados, setPecaServicoSelecionados] = useState<string[]>([]);
+  const [pecaServicoDropdownOpen, setPecaServicoDropdownOpen] = useState(false);
 
   // Manual costs
   const [custosManuaisAno, setCustosManuaisAno] = useState<CustoManual[]>([]);
+  const [custosManuaisAnoAnterior, setCustosManuaisAnoAnterior] = useState<CustoManual[]>([]);
   const [custosForm, setCustosForm] = useState<Record<string, CustoManual>>({});
   const [salvandoCustos, setSalvandoCustos] = useState(false);
   const [custosAberto, setCustosAberto] = useState(false);
@@ -360,23 +364,12 @@ export default function FechamentoPage() {
   // Chart metric selector
   const [metricaGrafico, setMetricaGrafico] = useState<MetricaGrafico>("faturamento");
 
-  // Load filter options on mount
+  // Calcular Variaveis
+  const [calculandoVariaveis, setCalculandoVariaveis] = useState(false);
+
+  // Initialize on mount
   useEffect(() => {
-    fetch("/api/filtros")
-      .then((res) => res.json())
-      .then((d) => {
-        setConsultoresDisponiveis(d.consultores || []);
-        if (d.dataMin) {
-          const minDate = new Date(d.dataMin + "T00:00:00");
-          setAno(minDate.getFullYear());
-          setMesSelecionado(minDate.getMonth());
-        }
-        setInicializado(true);
-      })
-      .catch((err) => {
-        console.error(err);
-        setInicializado(true);
-      });
+    setInicializado(true);
   }, []);
 
   // Fetch full year data + previous year + manual costs
@@ -386,27 +379,23 @@ export default function FechamentoPage() {
       const params = new URLSearchParams();
       params.set("dataInicio", `${ano}-01-01`);
       params.set("dataFim", `${ano}-12-31`);
-      if (consultoresSelecionados.length > 0) {
-        params.set("consultores", consultoresSelecionados.join(","));
-      }
 
       const paramsAnt = new URLSearchParams();
       paramsAnt.set("dataInicio", `${ano - 1}-01-01`);
       paramsAnt.set("dataFim", `${ano - 1}-12-31`);
-      if (consultoresSelecionados.length > 0) {
-        paramsAnt.set("consultores", consultoresSelecionados.join(","));
-      }
 
-      const [resAtual, resAnterior, resCustos] = await Promise.all([
+      const [resAtual, resAnterior, resCustos, resCustosAnt] = await Promise.all([
         fetch(`/api/dados?${params.toString()}`),
         fetch(`/api/dados?${paramsAnt.toString()}`),
         fetch(`/api/custos-manuais?ano=${ano}`),
+        fetch(`/api/custos-manuais?ano=${ano - 1}`),
       ]);
 
-      const [jsonAtual, jsonAnterior, jsonCustos] = await Promise.all([
+      const [jsonAtual, jsonAnterior, jsonCustos, jsonCustosAnt] = await Promise.all([
         resAtual.json(),
         resAnterior.json(),
         resCustos.json(),
+        resCustosAnt.json(),
       ]);
 
       const CLIENTES_INTER = ["PEDROTTI IMPLEMENTOS RODOVIARIOS LTDA", "POSTO DE MOLAS PEDROTTI LTDA"];
@@ -426,19 +415,41 @@ export default function FechamentoPage() {
 
       const custos: CustoManual[] = jsonCustos.custos || [];
       setCustosManuaisAno(custos);
+      setCustosManuaisAnoAnterior(jsonCustosAnt.custos || []);
 
       // Initialize form with existing data
       const formMap: Record<string, CustoManual> = {};
       for (const c of custos) {
         formMap[`${c.filial}_${c.mes}`] = { ...c };
       }
+
+      // Auto-calculate variaveis for all 12 months
+      try {
+        const variaveisPromises = Array.from({ length: 12 }, (_, i) =>
+          fetch(`/api/calcular-variaveis?ano=${ano}&mes=${i + 1}`).then((r) => r.json())
+        );
+        const variaveisResults = await Promise.all(variaveisPromises);
+        for (let i = 0; i < 12; i++) {
+          const resultado: Array<{ filial: string; custo_variaveis: number }> = variaveisResults[i]?.resultado || [];
+          for (const r of resultado) {
+            const key = `${r.filial}_${i + 1}`;
+            if (!formMap[key]) {
+              formMap[key] = { filial: r.filial, ano, mes: i + 1, custo_folha: 0, horas_extras: 0, custo_terceiros: 0, custo_variaveis: 0, consumiveis: 0 };
+            }
+            formMap[key] = { ...formMap[key], custo_variaveis: r.custo_variaveis };
+          }
+        }
+      } catch {
+        // ignore - variaveis calculation is optional
+      }
+
       setCustosForm(formMap);
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [ano, consultoresSelecionados]);
+  }, [ano]);
 
   useEffect(() => {
     if (inicializado) fetchAno();
@@ -453,8 +464,8 @@ export default function FechamentoPage() {
     return Array.from(set).sort();
   }, [dadosAno]);
 
-  // Filter data for selected month → DRE + cards
-  const dadosFiltrados = useMemo(() => {
+  // All data for the selected month (all consultants) — used for variavelEncarregado and consultant availability
+  const dadosMes = useMemo(() => {
     if (dadosAno.length === 0) return [];
     return dadosAno.filter((row) => {
       if (!row.data) return false;
@@ -463,12 +474,95 @@ export default function FechamentoPage() {
     });
   }, [dadosAno, mesSelecionado]);
 
-  // Variável do consultor: 2,5% do lucro de Peças
-  // Variável do encarregado: 2% lucro Peças + 3% lucro Serviço Oficina
-  const { variavelConsultor, variavelEncarregado } = useMemo(() => {
+  // Only consultants with faturamento in the selected month
+  const consultoresComFaturamento = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of dadosMes) {
+      if (row.consultor && (row.faturamento || 0) !== 0) {
+        set.add(row.consultor);
+      }
+    }
+    return Array.from(set).sort();
+  }, [dadosMes]);
+
+  // Clean up selected consultants when available list changes
+  useEffect(() => {
+    setConsultoresSelecionados((prev) => {
+      const filtered = prev.filter((c) => consultoresComFaturamento.includes(c));
+      return filtered.length !== prev.length ? filtered : prev;
+    });
+  }, [consultoresComFaturamento]);
+
+  // Only tipo_midia with faturamento in the selected month
+  const midiasDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of dadosMes) {
+      if (row.tipo_midia && (row.faturamento || 0) !== 0) {
+        set.add(row.tipo_midia);
+      }
+    }
+    return Array.from(set).sort();
+  }, [dadosMes]);
+
+  // Clean up selected midias when available list changes
+  useEffect(() => {
+    setMidiasSelecionadas((prev) => {
+      const filtered = prev.filter((m) => midiasDisponiveis.includes(m));
+      return filtered.length !== prev.length ? filtered : prev;
+    });
+  }, [midiasDisponiveis]);
+
+  // Only peca_ou_servico with faturamento in the selected month
+  const pecaServicoDisponiveis = useMemo(() => {
+    const set = new Set<string>();
+    for (const row of dadosMes) {
+      if (row.peca_ou_servico && (row.faturamento || 0) !== 0) {
+        set.add(row.peca_ou_servico);
+      }
+    }
+    return Array.from(set).sort();
+  }, [dadosMes]);
+
+  // Clean up selected peca/servico when available list changes
+  useEffect(() => {
+    setPecaServicoSelecionados((prev) => {
+      const filtered = prev.filter((p) => pecaServicoDisponiveis.includes(p));
+      return filtered.length !== prev.length ? filtered : prev;
+    });
+  }, [pecaServicoDisponiveis]);
+
+  // Month + consultant + midia + peca/servico filtered data (for DRE, cards, variavelConsultor)
+  const dadosFiltrados = useMemo(() => {
+    let filtered = dadosMes;
+    if (consultoresSelecionados.length > 0) {
+      filtered = filtered.filter((row) => consultoresSelecionados.includes(row.consultor));
+    }
+    if (midiasSelecionadas.length > 0) {
+      filtered = filtered.filter((row) => midiasSelecionadas.includes(row.tipo_midia));
+    }
+    if (pecaServicoSelecionados.length > 0) {
+      filtered = filtered.filter((row) => pecaServicoSelecionados.includes(row.peca_ou_servico));
+    }
+    return filtered;
+  }, [dadosMes, consultoresSelecionados, midiasSelecionadas, pecaServicoSelecionados]);
+
+  // Variável do consultor: 2,5% do lucro de Peças (respects consultant filter)
+  const variavelConsultor = useMemo(() => {
+    let lucroPecas = 0;
+    for (const row of dadosFiltrados) {
+      const tipo = (row.peca_ou_servico || "").toUpperCase();
+      if (tipo.includes("PE")) {
+        lucroPecas += row.lucro_rs || 0;
+      }
+    }
+    return Math.max(0, lucroPecas * 0.025);
+  }, [dadosFiltrados]);
+
+  // Variável do encarregado: 2% lucro Peças + 3% lucro Serviço Oficina (always total geral do mês)
+  const variavelEncarregado = useMemo(() => {
     let lucroPecas = 0;
     let lucroServicoOficina = 0;
-    for (const row of dadosFiltrados) {
+    for (const row of dadosMes) {
       const tipo = (row.peca_ou_servico || "").toUpperCase();
       if (tipo.includes("PE")) {
         lucroPecas += row.lucro_rs || 0;
@@ -477,12 +571,11 @@ export default function FechamentoPage() {
         lucroServicoOficina += row.lucro_rs || 0;
       }
     }
-    // Adjust lucroServicoOficina by manual cost delta (same override as DRE tree)
     const mesAtual = mesSelecionado + 1;
     for (const cm of custosManuaisAno.filter((c) => c.mes === mesAtual)) {
       const manualTotal = (cm.custo_folha || 0) + (cm.horas_extras || 0) + (cm.custo_terceiros || 0) + (cm.custo_variaveis || 0) + (cm.consumiveis || 0);
       let oldCost = 0;
-      for (const r of dadosFiltrados) {
+      for (const r of dadosMes) {
         if (r.filial === cm.filial && (r.peca_ou_servico || "").toUpperCase().includes("SERVI") && (r.balcao_ou_oficina || "").toUpperCase().includes("OFICINA") && (r.tipo_midia || "").toUpperCase().includes("OUTRO")) {
           oldCost += r.custo_total || 0;
         }
@@ -490,14 +583,10 @@ export default function FechamentoPage() {
       const delta = manualTotal - oldCost;
       lucroServicoOficina -= delta;
     }
-    const comissaoPecasConsultor = Math.max(0, lucroPecas * 0.025);
     const comissaoPecasEncarregado = Math.max(0, lucroPecas * 0.02);
     const comissaoServicoEncarregado = Math.max(0, lucroServicoOficina * 0.03);
-    return {
-      variavelConsultor: comissaoPecasConsultor,
-      variavelEncarregado: comissaoPecasEncarregado + comissaoServicoEncarregado,
-    };
-  }, [dadosFiltrados, custosManuaisAno, mesSelecionado]);
+    return comissaoPecasEncarregado + comissaoServicoEncarregado;
+  }, [dadosMes, custosManuaisAno, mesSelecionado]);
 
   // Build DRE tree with manual cost override
   useEffect(() => {
@@ -515,9 +604,26 @@ export default function FechamentoPage() {
 
   // Monthly aggregation for chart (all 12 months, with manual costs + previous year)
   const dadosMensais = useMemo<MesChartData[]>(() => {
+    // Apply consultant + midia + peca/servico filter client-side
+    function applyFilters(rows: DataRow[]): DataRow[] {
+      let result = rows;
+      if (consultoresSelecionados.length > 0) {
+        result = result.filter((r) => consultoresSelecionados.includes(r.consultor));
+      }
+      if (midiasSelecionadas.length > 0) {
+        result = result.filter((r) => midiasSelecionadas.includes(r.tipo_midia));
+      }
+      if (pecaServicoSelecionados.length > 0) {
+        result = result.filter((r) => pecaServicoSelecionados.includes(r.peca_ou_servico));
+      }
+      return result;
+    }
+    const dadosAnoFiltrado = applyFilters(dadosAno);
+    const dadosAntFiltrado = applyFilters(dadosAnoAnterior);
+
     // Current year: group by month
     const porMes = new Map<number, DataRow[]>();
-    for (const row of dadosAno) {
+    for (const row of dadosAnoFiltrado) {
       if (!row.data) continue;
       const d = new Date(row.data + "T00:00:00");
       const mesIdx = d.getMonth();
@@ -527,7 +633,7 @@ export default function FechamentoPage() {
 
     // Previous year: group by month
     const porMesAnt = new Map<number, DataRow[]>();
-    for (const row of dadosAnoAnterior) {
+    for (const row of dadosAntFiltrado) {
       if (!row.data) continue;
       const d = new Date(row.data + "T00:00:00");
       const mesIdx = d.getMonth();
@@ -535,7 +641,7 @@ export default function FechamentoPage() {
       porMesAnt.get(mesIdx)!.push(row);
     }
 
-    function calcMetric(rows: DataRow[], mesIdx: number, metrica: MetricaGrafico, custosM: CustoManual[]): number {
+    function calcMetric(rows: DataRow[], allYearRows: DataRow[], mesIdx: number, metrica: MetricaGrafico, custosM: CustoManual[]): number {
       let fat = 0, vendaLiq = 0, lucro = 0;
       const regs: Array<{ condicao_pagamento: string | null; faturamento: number }> = [];
       for (const r of rows) {
@@ -548,8 +654,10 @@ export default function FechamentoPage() {
       if (metrica === "faturamento") return Math.round(fat * 100) / 100;
       if (metrica === "tmr") return rows.length > 0 ? Math.round(calcularTMR(regs) * 100) / 100 : 0;
 
-      // Margem: apply manual cost delta
-      const delta = computeCostDelta(dadosAno, custosM, mesIdx + 1);
+      // Margem: apply manual cost delta only if data includes service rows
+      // (manual costs are for Servico Oficina, not Pecas)
+      const hasServices = rows.some((r) => (r.peca_ou_servico || "").toUpperCase().includes("SERVI"));
+      const delta = hasServices ? computeCostDelta(allYearRows, custosM, mesIdx + 1) : 0;
       const adjustedLucro = lucro - delta;
       const margem = vendaLiq !== 0 ? (adjustedLucro / vendaLiq) * 100 : 0;
       return Math.round(margem * 100) / 100;
@@ -562,14 +670,14 @@ export default function FechamentoPage() {
       result.push({
         mes: MESES[i],
         mesIdx: i,
-        atual: calcMetric(rowsAtual, i, metricaGrafico, custosManuaisAno),
-        anterior: calcMetric(rowsAnt, i, metricaGrafico, []), // no manual costs for previous year
+        atual: calcMetric(rowsAtual, dadosAnoFiltrado, i, metricaGrafico, custosManuaisAno),
+        anterior: calcMetric(rowsAnt, dadosAntFiltrado, i, metricaGrafico, custosManuaisAnoAnterior),
         selecionado: i === mesSelecionado,
       });
     }
 
     return result;
-  }, [dadosAno, dadosAnoAnterior, mesSelecionado, metricaGrafico, custosManuaisAno]);
+  }, [dadosAno, dadosAnoAnterior, mesSelecionado, metricaGrafico, custosManuaisAno, custosManuaisAnoAnterior, consultoresSelecionados, midiasSelecionadas, pecaServicoSelecionados]);
 
   function toggleNode(target: TreeNode) {
     target.expanded = !target.expanded;
@@ -583,6 +691,18 @@ export default function FechamentoPage() {
   function toggleConsultor(consultor: string) {
     setConsultoresSelecionados((prev) =>
       prev.includes(consultor) ? prev.filter((c) => c !== consultor) : [...prev, consultor]
+    );
+  }
+
+  function toggleMidia(midia: string) {
+    setMidiasSelecionadas((prev) =>
+      prev.includes(midia) ? prev.filter((m) => m !== midia) : [...prev, midia]
+    );
+  }
+
+  function togglePecaServico(ps: string) {
+    setPecaServicoSelecionados((prev) =>
+      prev.includes(ps) ? prev.filter((p) => p !== ps) : [...prev, ps]
     );
   }
 
@@ -641,6 +761,29 @@ export default function FechamentoPage() {
       setCustosMensagem({ tipo: "erro", texto: msg });
     } finally {
       setSalvandoCustos(false);
+    }
+  }
+
+  async function calcularVariaveis() {
+    setCalculandoVariaveis(true);
+    setCustosMensagem(null);
+    try {
+      const res = await fetch(`/api/calcular-variaveis?ano=${ano}&mes=${mesSelecionado + 1}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+
+      const resultado: Array<{ filial: string; custo_variaveis: number }> = json.resultado || [];
+      for (const r of resultado) {
+        updateCustoField(r.filial, "custo_variaveis", r.custo_variaveis);
+      }
+      setCustosMensagem({
+        tipo: "sucesso",
+        texto: `Variaveis calculadas para ${resultado.length} filial(is). Salve para confirmar.`,
+      });
+    } catch (err) {
+      setCustosMensagem({ tipo: "erro", texto: err instanceof Error ? err.message : "Erro ao calcular" });
+    } finally {
+      setCalculandoVariaveis(false);
     }
   }
 
@@ -734,14 +877,14 @@ export default function FechamentoPage() {
             {consultorDropdownOpen && (
               <div className="absolute z-50 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
                 <div className="sticky top-0 bg-white border-b border-slate-100 p-2.5 flex gap-3">
-                  <button onClick={() => setConsultoresSelecionados([...consultoresDisponiveis])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                  <button onClick={() => setConsultoresSelecionados([...consultoresComFaturamento])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
                     Selecionar todos
                   </button>
                   <button onClick={() => setConsultoresSelecionados([])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
                     Limpar
                   </button>
                 </div>
-                {consultoresDisponiveis.map((consultor) => (
+                {consultoresComFaturamento.map((consultor) => (
                   <label key={consultor} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
                     <input
                       type="checkbox"
@@ -756,6 +899,94 @@ export default function FechamentoPage() {
             )}
           </div>
 
+          <div className="relative">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide block mb-1.5">Tipo Midia</span>
+            <button
+              type="button"
+              onClick={() => setMidiaDropdownOpen(!midiaDropdownOpen)}
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] text-left flex items-center justify-between hover:border-slate-300 transition-colors"
+            >
+              <span className="truncate text-slate-600">
+                {midiasSelecionadas.length === 0
+                  ? "Todos os tipos"
+                  : midiasSelecionadas.length === 1
+                    ? midiasSelecionadas[0]
+                    : `${midiasSelecionadas.length} selecionados`}
+              </span>
+              <svg className="w-4 h-4 ml-2 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {midiaDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                <div className="sticky top-0 bg-white border-b border-slate-100 p-2.5 flex gap-3">
+                  <button onClick={() => setMidiasSelecionadas([...midiasDisponiveis])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Selecionar todos
+                  </button>
+                  <button onClick={() => setMidiasSelecionadas([])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Limpar
+                  </button>
+                </div>
+                {midiasDisponiveis.map((midia) => (
+                  <label key={midia} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={midiasSelecionadas.includes(midia)}
+                      onChange={() => toggleMidia(midia)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="truncate text-slate-600">{midia}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="relative">
+            <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wide block mb-1.5">Peca / Servico</span>
+            <button
+              type="button"
+              onClick={() => setPecaServicoDropdownOpen(!pecaServicoDropdownOpen)}
+              className="border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] text-left flex items-center justify-between hover:border-slate-300 transition-colors"
+            >
+              <span className="truncate text-slate-600">
+                {pecaServicoSelecionados.length === 0
+                  ? "Todos"
+                  : pecaServicoSelecionados.length === 1
+                    ? pecaServicoSelecionados[0]
+                    : `${pecaServicoSelecionados.length} selecionados`}
+              </span>
+              <svg className="w-4 h-4 ml-2 text-slate-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {pecaServicoDropdownOpen && (
+              <div className="absolute z-50 mt-1 w-72 bg-white border border-slate-200 rounded-xl shadow-lg max-h-60 overflow-auto">
+                <div className="sticky top-0 bg-white border-b border-slate-100 p-2.5 flex gap-3">
+                  <button onClick={() => setPecaServicoSelecionados([...pecaServicoDisponiveis])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Selecionar todos
+                  </button>
+                  <button onClick={() => setPecaServicoSelecionados([])} className="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Limpar
+                  </button>
+                </div>
+                {pecaServicoDisponiveis.map((ps) => (
+                  <label key={ps} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={pecaServicoSelecionados.includes(ps)}
+                      onChange={() => togglePecaServico(ps)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="truncate text-slate-600">{ps}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           {periodoLabel && (
             <span className="text-xs text-slate-400 ml-auto self-center">
               Periodo: <span className="font-medium text-slate-600">{periodoLabel}</span>
@@ -764,8 +995,8 @@ export default function FechamentoPage() {
         </div>
       </div>
 
-      {consultorDropdownOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setConsultorDropdownOpen(false)} />
+      {(consultorDropdownOpen || midiaDropdownOpen || pecaServicoDropdownOpen) && (
+        <div className="fixed inset-0 z-40" onClick={() => { setConsultorDropdownOpen(false); setMidiaDropdownOpen(false); setPecaServicoDropdownOpen(false); }} />
       )}
 
       {/* Metric Cards */}
@@ -966,7 +1197,14 @@ export default function FechamentoPage() {
                   {custosMensagem.texto}
                 </div>
               )}
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex justify-end gap-2">
+                <button
+                  onClick={calcularVariaveis}
+                  disabled={calculandoVariaveis}
+                  className="border border-blue-200 text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-50 disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 transition-colors"
+                >
+                  {calculandoVariaveis ? "Calculando..." : "Calcular Variaveis"}
+                </button>
                 <button
                   onClick={salvarCustos}
                   disabled={salvandoCustos}

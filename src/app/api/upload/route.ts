@@ -243,9 +243,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Log the upload
+    // Log the upload (try with tipo, fallback without if column doesn't exist)
     const status = errors.length > 0 ? (inserted > 0 ? "parcial" : "erro") : "sucesso";
-    await supabase.from("upload_logs").insert({
+    const logData = {
       nome_arquivo: file.name,
       tamanho_bytes: file.size,
       total_registros: dataRows.length,
@@ -253,7 +253,13 @@ export async function POST(request: NextRequest) {
       storage_path: storageError ? null : storagePath,
       status,
       erros: errors.length > 0 ? errors : null,
-    });
+      tipo: "pecas_servicos",
+    };
+    const { error: logError } = await supabase.from("upload_logs").insert(logData);
+    if (logError) {
+      const { tipo: _, ...logWithoutTipo } = logData;
+      await supabase.from("upload_logs").insert(logWithoutTipo);
+    }
 
     return NextResponse.json({
       success: true,
